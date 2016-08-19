@@ -25,39 +25,39 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class DHTServer {
 
-        private final Selector selector;
-        private final ExecutorService udpReader = Executors.newSingleThreadExecutor();
-        private final ExecutorService udpWriter = Executors.newSingleThreadExecutor();
-        private final ExecutorService dataProcessor = Executors.newSingleThreadExecutor();
-        private final BlockingQueue<Object[]> responseDataQueue = new LinkedBlockingQueue<Object[]>();
-        private final BlockingQueue<Object[]> requestDataQueue = new LinkedBlockingQueue<Object[]>();
-        private final Lock lock = new ReentrantLock();
-        private final ByteBuffer buffer = ByteBuffer.allocateDirect(10240);
+    private final Selector selector;
+    private final ExecutorService udpReader = Executors.newSingleThreadExecutor();
+    private final ExecutorService udpWriter = Executors.newSingleThreadExecutor();
+    private final ExecutorService dataProcessor = Executors.newSingleThreadExecutor();
+    private final BlockingQueue<Object[]> responseDataQueue = new LinkedBlockingQueue<Object[]>();
+    private final BlockingQueue<Object[]> requestDataQueue = new LinkedBlockingQueue<Object[]>();
+    private final Lock lock = new ReentrantLock();
+    private final ByteBuffer buffer = ByteBuffer.allocateDirect(10240);
 
-        private static final ExecutorService WORKER = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-        private static final ExecutorService NODE_FINDER = Executors.newSingleThreadExecutor();
-        private static final CopyOnWriteArrayList<Object[]> NODES = new CopyOnWriteArrayList<Object[]>();
-        public static final String[][] ROOT_NODES = {
-                {"router.utorrent.com", "6881", null},
-                {"dht.transmissionbt.com", "6881", null},
-                {"router.bittorrent.com", "6881", null}
-        };
+    private static final ExecutorService WORKER = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    private static final ExecutorService NODE_FINDER = Executors.newSingleThreadExecutor();
+    private static final CopyOnWriteArrayList<Object[]> NODES = new CopyOnWriteArrayList<Object[]>();
+    public static final String[][] ROOT_NODES = {
+            {"router.utorrent.com", "6881", null},
+            {"dht.transmissionbt.com", "6881", null},
+            {"router.bittorrent.com", "6881", null}
+    };
 
 
-        public DHTServer(List<byte[]> ips, List<Integer> ports, List<String> ids) {
+    public DHTServer(List<byte[]> ips, List<Integer> ports, List<String> ids) {
         try {
             selector = Selector.open();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
 
-        for(int i = 0; i < ips.size(); i++) {
+        for (int i = 0; i < ips.size(); i++) {
             bind(ips.get(i), ports.get(i), ids.get(i));
         }
 
         udpReader.execute(new Runnable() {
             public void run() {
-                for(;;) {
+                for (; ; ) {
                     try {
                         if (selector.select() == 0) {
                             continue;
@@ -75,7 +75,7 @@ public class DHTServer {
                                 buffer.get(result);
                                 buffer.clear();
 
-                                if(result.length > 0) {
+                                if (result.length > 0) {
                                     responseDataQueue.put(new Object[]{key, result, address});
                                 }
                             }
@@ -90,14 +90,14 @@ public class DHTServer {
 
         udpWriter.execute(new Runnable() {
             public void run() {
-                for(;;) {
+                for (; ; ) {
                     try {
                         Object[] info = requestDataQueue.take();
                         ByteBuffer data = (ByteBuffer) info[0];
                         SocketAddress target = (SocketAddress) info[1];
                         final DatagramChannel dc = (DatagramChannel) ((SelectionKey) info[2]).channel();
 
-                        while(data.hasRemaining()) {
+                        while (data.hasRemaining()) {
                             dc.send(data, target);
                         }
                     } catch (Exception e) {
@@ -108,7 +108,7 @@ public class DHTServer {
 
         dataProcessor.execute(new Runnable() {
             public void run() {
-                for(;;) {
+                for (; ; ) {
                     SelectionKey key = null;
                     byte[] data = null;
                     InetSocketAddress address = null;
@@ -122,45 +122,45 @@ public class DHTServer {
                         final BencodeMap response = BencodeMap.getMap(new String(data, "iso-8859-1"), 0);
 
                         String y = new String(response.get(new BencodeString("y")).getData(), "iso-8859-1");
-                        if(y.equals("r")) {
+                        if (y.equals("r")) {
                             final Callbacker cb = getCallbacker(key, ByteBuffer.wrap(response.get(new BencodeString("t")).getData()).getChar() - 0);
-                            if(null != cb) {
+                            if (null != cb) {
                                 WORKER.execute(new Runnable() {
                                     public void run() {
                                         cb.execute(response);
                                     }
                                 });
                             }
-                        } else if(y.equals("q")) {
+                        } else if (y.equals("q")) {
                             String id = new String(((BencodeMap) (response.get(new BencodeString("a")))).get(new BencodeString("id")).getData(), "iso-8859-1");
                             String t = new String(response.get(new BencodeString("t")).getData(), "iso-8859-1");
                             bucketList.addNode(new Node(address.getAddress().getHostAddress(), address.getPort(), id));
 
                             String q = new String(response.get(new BencodeString("q")).getData(), "iso-8859-1");
-                            if(q.equals("ping")) {
+                            if (q.equals("ping")) {
                                 responsePing(key, address, t);
-                            } else if(q.equals("find_node")) {
+                            } else if (q.equals("find_node")) {
                                 String target = new String(((BencodeMap) (response.get(new BencodeString("a")))).get(new BencodeString("target")).getData(), "iso-8859-1");
 
                                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                for(Node node : bucketList.getNearestNodes(new NodeId(target.getBytes("iso-8859-1")))) {
+                                for (Node node : bucketList.getNearestNodes(new NodeId(target.getBytes("iso-8859-1")))) {
                                     baos.write(node.getId().getData());
                                     baos.write(node.getIp());
                                     baos.write(node.getPort());
                                 }
                                 responseFindNode(key, address, t, new String(baos.toByteArray(), "iso-8859-1"));
-                            } else if(q.equals("get_peers")) {
+                            } else if (q.equals("get_peers")) {
                                 String infoHash = new String(((BencodeMap) (response.get(new BencodeString("a")))).get(new BencodeString("info_hash")).getData(), "iso-8859-1");
                                 println(infoHash);
 
                                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                for(Node node : bucketList.getNearestNodes(new NodeId(infoHash.getBytes("iso-8859-1")))) {
+                                for (Node node : bucketList.getNearestNodes(new NodeId(infoHash.getBytes("iso-8859-1")))) {
                                     baos.write(node.getId().getData());
                                     baos.write(node.getIp());
                                     baos.write(node.getPort());
                                 }
                                 responseGetPeers(key, address, t, new String(baos.toByteArray(), "iso-8859-1"), "dg");
-                            } else if(q.equals("announce_peer")) {
+                            } else if (q.equals("announce_peer")) {
                                 String infoHash = new String(((BencodeMap) (response.get(new BencodeString("a")))).get(new BencodeString("info_hash")).getData(), "iso-8859-1");
                                 println(infoHash);
 
@@ -175,9 +175,9 @@ public class DHTServer {
 
             private void println(String infoHash) {
                 StringBuilder msg = new StringBuilder(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss SSS").format(new Date())).append(" magnet:?xt=urn:btih:");
-                for(char c : infoHash.toCharArray()) {
+                for (char c : infoHash.toCharArray()) {
                     String hs = Integer.toHexString(c);
-                    if(hs.length() == 1) {
+                    if (hs.length() == 1) {
                         msg.append(0);
                     }
                     msg.append(hs);
@@ -194,8 +194,8 @@ public class DHTServer {
 
             @SuppressWarnings("unchecked")
             public void run() {
-                for(;;) {
-                    for(Object[] objs : NODES) {
+                for (; ; ) {
+                    for (Object[] objs : NODES) {
                         final Stack<String[]> stack = (Stack<String[]>) objs[0];
                         final Set<String> oldNode = (Set<String>) objs[1];
                         final SelectionKey key = (SelectionKey) objs[2];
@@ -205,9 +205,9 @@ public class DHTServer {
                         String[] temp = null;
                         boolean isOver = false;
                         synchronized (stack) {
-                            if(stack.size() > 0) {
-                                if(stack.size() > MAX_STACK) {
-                                    for(int i = 0; i < MAX_STACK; i++) {
+                            if (stack.size() > 0) {
+                                if (stack.size() > MAX_STACK) {
+                                    for (int i = 0; i < MAX_STACK; i++) {
                                         stack.remove(i);
                                     }
                                 }
@@ -217,7 +217,7 @@ public class DHTServer {
                             }
                         }
 
-                        if(isOver) {
+                        if (isOver) {
                             NODES.remove(objs);
                             continue;
                         }
@@ -226,11 +226,11 @@ public class DHTServer {
                         final InetSocketAddress target = new InetSocketAddress(address[0], Integer.parseInt(address[1]));
 
                         synchronized (oldNode) {
-                            if(oldNode.contains(address[0] + ":" + address[1])) {
+                            if (oldNode.contains(address[0] + ":" + address[1])) {
                                 continue;
                             } else {
-                                if(oldNode.size() > MAX_OLD_NODE) {
-                                    for(int i = 0; i < MAX_OLD_NODE / 2; i++) {
+                                if (oldNode.size() > MAX_OLD_NODE) {
+                                    for (int i = 0; i < MAX_OLD_NODE / 2; i++) {
                                         oldNode.remove(i);
                                     }
                                 }
@@ -244,16 +244,16 @@ public class DHTServer {
                                 String port = address[1];
                                 String nodeId = address[2];
 
-                                if(null != nodeId) {
+                                if (null != nodeId) {
                                     bucketList.addNode(new Node(ip, Integer.parseInt(port), nodeId));
                                 }
 
                                 findNode(key, target, id, new Callbacker() {
                                     public void execute(BencodeMap response) {
                                         try {
-                                            byte[] nodes = ((BencodeMap)(response.get(new BencodeString("r")))).get(new BencodeString("nodes")).getData();
+                                            byte[] nodes = ((BencodeMap) (response.get(new BencodeString("r")))).get(new BencodeString("nodes")).getData();
 
-                                            for(int i = 0; i < nodes.length; i += 26) {
+                                            for (int i = 0; i < nodes.length; i += 26) {
                                                 String nodeId = new String(Arrays.copyOfRange(nodes, i, i + 20), "iso-8859-1");
                                                 byte[] ipPort = Arrays.copyOfRange(nodes, i + 20, i + 26);
                                                 String ip = (ipPort[0] & 0xFF) + "." + (ipPort[1] & 0xFF) + "." + (ipPort[2] & 0xFF) + "." + (ipPort[3] & 0xFF);
@@ -262,17 +262,17 @@ public class DHTServer {
                                                 boolean isContain = true;
                                                 synchronized (stack) {
                                                     synchronized (oldNode) {
-                                                        if(!oldNode.contains(ip + ":" + port)) {
+                                                        if (!oldNode.contains(ip + ":" + port)) {
                                                             isContain = false;
                                                         }
                                                     }
 
-                                                    if(!isContain) {
+                                                    if (!isContain) {
                                                         stack.push(new String[]{ip, String.valueOf(port), nodeId});
                                                     }
                                                 }
                                             }
-                                        }catch (Exception e) {
+                                        } catch (Exception e) {
                                         }
                                     }
                                 });
@@ -281,7 +281,8 @@ public class DHTServer {
 
                         try {
                             Thread.sleep(1000 / TPS);
-                        } catch (InterruptedException e) { }
+                        } catch (InterruptedException e) {
+                        }
                     }
                 }
             }
@@ -292,7 +293,7 @@ public class DHTServer {
         SelectionKey key = null;
         try {
             List<Integer> transactionIds = new ArrayList<Integer>(Character.MAX_VALUE + 1);
-            for(int i = 0; i <= Character.MAX_VALUE; i++) {
+            for (int i = 0; i <= Character.MAX_VALUE; i++) {
                 transactionIds.add(i);
             }
 
@@ -318,7 +319,7 @@ public class DHTServer {
             );
 
             Stack<String[]> stack = new Stack<String[]>();
-            for(String[] address : ROOT_NODES) {
+            for (String[] address : ROOT_NODES) {
                 stack.push(address);
             }
             NODES.add(new Object[]{stack, new HashSet<String>(), key, bucketList, id});
@@ -336,7 +337,7 @@ public class DHTServer {
             List<Integer> transactionIds = (List<Integer>) attachment[0];
             List<Callbacker> callbackers = (List<Callbacker>) attachment[1];
 
-            if(transactionIds.isEmpty()) {
+            if (transactionIds.isEmpty()) {
                 removeTransaction(key);
             }
             cb.setTransactionId(transactionIds.remove(0));
@@ -356,13 +357,13 @@ public class DHTServer {
             List<Integer> transactionIds = (List<Integer>) attachment[0];
             List<Callbacker> callbackers = (List<Callbacker>) attachment[1];
 
-            for(Callbacker cb : callbackers) {
-                if(cb.getTransactionId() == transactionId) {
+            for (Callbacker cb : callbackers) {
+                if (cb.getTransactionId() == transactionId) {
                     result = cb;
                     break;
                 }
             }
-            if(null != result) {
+            if (null != result) {
                 callbackers.remove(result);
                 transactionIds.add(result.getTransactionId());
             }
